@@ -5,7 +5,7 @@
 
     <groupId>org.github.flytreeleft</groupId>
     <artifactId>nexus3-keycloak-plugin</artifactId>
-    <version>0.6.0-SNAPSHOT</version>
+    <version>0.6.0-nexus3.69.0</version>
     <name>${project.groupId}:${project.artifactId}</name>
     <packaging>bundle</packaging>
 
@@ -27,7 +27,7 @@
     <parent>
         <groupId>org.sonatype.nexus.plugins</groupId>
         <artifactId>nexus-plugins</artifactId>
-        <version>3.15.3-01</version>
+        <version>3.69.0-02</version>
     </parent>
 
     <properties>
@@ -37,6 +37,8 @@
         <maven.compiler.target>1.8</maven.compiler.target>
 
         <keycloak.version>9.0.2</keycloak.version>
+        <!-- Sonatype CLM is not required to compile this plugin. -->
+        <clm.skip>true</clm.skip>
     </properties>
 
     <issueManagement>
@@ -86,10 +88,22 @@
     </contributors>
 
     <dependencies>
+        <!--
+          Provided so the Karaf feature does not install Keycloak, Jackson, or
+          BouncyCastle beside Nexus. The bundle plugin inlines these classes into
+          the plugin jar, which is how the 0.4.0 bundle shipped them.
+        -->
         <dependency>
             <groupId>org.keycloak</groupId>
             <artifactId>keycloak-core</artifactId>
             <version>${keycloak.version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.keycloak</groupId>
+            <artifactId>keycloak-common</artifactId>
+            <version>${keycloak.version}</version>
+            <scope>provided</scope>
         </dependency>
         <dependency>
             <groupId>org.sonatype.nexus</groupId>
@@ -144,8 +158,12 @@
                 <configuration>
                     <instructions>
                         <Bundle-SymbolicName>${project.artifactId}</Bundle-SymbolicName>
-                        <Embed-Dependency>
-                        </Embed-Dependency>
+                        <!--
+                          Inline Keycloak so the bundle is installable on Nexus the same way
+                          0.4.0 was: Nexus does not provide org.keycloak.* packages.
+                        -->
+                        <Embed-Dependency>keycloak-core;scope=provided;inline=true,keycloak-common;scope=provided;inline=true</Embed-Dependency>
+                        <Embed-Transitive>false</Embed-Transitive>
                         <Import-Package>
                             org.keycloak.*,
                             org.bouncycastle.*;resolution:=optional,

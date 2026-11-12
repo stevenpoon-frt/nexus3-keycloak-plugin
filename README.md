@@ -1,10 +1,140 @@
 Nexus3 Keycloak Plugin
 ===============================
 
+Frontiers build for Nexus Repository OSS 3.69.0-02
+---------------------------------------------------
+
+This tree keeps the upstream git history, Apache-2.0 license, and attribution of
+[flytreeleft/nexus3-keycloak-plugin](https://github.com/flytreeleft/nexus3-keycloak-plugin)
+(archived). It is compiled against Nexus Repository OSS **3.69.0-02** on Java 8.
+
+**Version string:** `0.6.0-nexus3.69.0`
+
+Maven coordinate:
+
+```
+org.github.flytreeleft:nexus3-keycloak-plugin:0.6.0-nexus3.69.0
+```
+
+Karaf start level 200 entry, same shape as the image that installed `0.4.0-SNAPSHOT`:
+
+```
+reference:file:/org/github/flytreeleft/nexus3-keycloak-plugin/0.6.0-nexus3.69.0/nexus3-keycloak-plugin-0.6.0-nexus3.69.0.jar = 200
+```
+
+### What changed versus upstream
+
+Upstream `0.4.0` and `0.6.0-SNAPSHOT` are built against Nexus `3.15.3-01`.
+Login through `KeycloakAuthenticatingRealm` can succeed on Nexus 3.69, and the UI
+then crashes:
+
+```
+java.lang.AbstractMethodError
+    at org.sonatype.nexus.security.internal.DefaultSecuritySystem.findUser(DefaultSecuritySystem.java:353)
+    at org.sonatype.nexus.security.internal.DefaultSecuritySystem.currentUser(DefaultSecuritySystem.java:377)
+```
+
+Line 353 is `userManager.getUser(userId, roleIds)`. `UserManager` gained that
+overload after 3.15. `AbstractReadOnlyUserManager` in 3.69 does not implement it,
+and `KeycloakUserManager` did not either. `currentUser` passes a null role set.
+The missing method is a binary-compatibility gap, not a Keycloak outage.
+
+`AuthorizationManager` also gained `getPrivilegeByName` and `getPrivileges`.
+`AbstractReadOnlyAuthorizationManager` in 3.69 does not implement those, so the
+plugin now does. Privileges are still not stored in Keycloak: lookup by name
+throws `NoSuchPrivilegeException`, and `getPrivileges` returns an empty list,
+matching `listPrivileges()`.
+
+`getUser(String, Set)` follows Nexus `UserManagerImpl`:
+
+- `roleIds == null` loads the user and roles from Keycloak. This is the `getState` / `currentUser` path.
+- a non-null set is applied as this source's role ids and does not call Keycloak for roles again.
+
+Nexus 3.69 `UserManager` does not declare `isConfigured()`. That method appears in
+3.70 and is intentionally not added here.
+
+Community forks were checked before adapting anything:
+
+- `inside-m2m-gp` (parent `3.69.0-02`) adds `getUser(String, Set)` but ignores the null-versus-set contract and reformats the sources.
+- `nsakellariou-cite` (parent `3.68.1-02`) always delegates to `getUser(String)`, which is correct for the null role set used by `currentUser`, and returns an empty privilege list.
+- `rverchere` changes the parent to `3.69.0-02` without adding `getUser(String, Set)`. A later commit adds `isConfigured()`, which does not exist on the 3.69 interface.
+
+Only the 3.69 method gap is taken from those forks. Behavior of role mapping, SSO headers, and Keycloak 9 client calls is unchanged.
+
+### Build
+
+JDK 8 and Maven. The parent POM is `org.sonatype.nexus.plugins:nexus-plugins:3.69.0-02`.
+
+```
+export JAVA_HOME=/usr/lib/jvm/temurin-8-jdk-amd64
+mvn -PbuildKar clean verify
+```
+
+Artifacts:
+
+- `target/nexus3-keycloak-plugin-0.6.0-nexus3.69.0.jar`
+- `target/nexus3-keycloak-plugin-0.6.0-nexus3.69.0-bundle.kar`
+
+The JAR inlines Keycloak 9.0.2 (`org.keycloak.*`), same as the 0.4.0 bundle. The KAR
+contains only that bundle. It does not install a second Jackson or BouncyCastle.
+OSGi `Bundle-Version` is `0.6.0.nexus3_69_0`. Paths and `startup.properties` use the
+Maven version `0.6.0-nexus3.69.0`.
+
+`mvn -PbuildKar clean verify` compiles against the 3.69 security API and runs the
+unit tests, including a reflection check that every abstract `UserManager` and
+`AuthorizationManager` method is implemented by the plugin classes and the
+`auth0` / `auth1` / `auth2` subclasses.
+
+Not run here: a live Nexus 3.69 process, Keycloak, or any Frontiers host.
+Do not deploy this artifact to a production Nexus from this repository's scripts.
+
+### Install into an image `FROM sonatype/nexus3:3.69.0`
+
+Build the jar first. `docker/build.sh` copies it beside `docker/Dockerfile` and
+builds a local image. It does not start a container and does not copy `keycloak.json`
+(`docker/.dockerignore` excludes that file). Mount the Office realm file at runtime
+from a secret store. Do not bake a client secret into the image.
+
+The image registers the bundle at Karaf level 200 with `reference:file:`, which is
+how `0.4.0-SNAPSHOT` was installed. The jar path under the Nexus system directory is:
+
+```
+/opt/sonatype/nexus/system/org/github/flytreeleft/nexus3-keycloak-plugin/0.6.0-nexus3.69.0/nexus3-keycloak-plugin-0.6.0-nexus3.69.0.jar
+```
+
+Equivalent `mvn:` startup line, if the image uses Maven URLs instead of `reference:file:`:
+
+```
+mvn:org.github.flytreeleft/nexus3-keycloak-plugin/0.6.0-nexus3.69.0 = 200
+```
+
+The KAR can be dropped in `/opt/sonatype/nexus/deploy/` instead of editing
+`startup.properties`. Use one install method, not both, or the bundle will be
+started twice.
+
+### Rollback
+
+Put the previous level-200 line back and leave the old jar on disk:
+
+```
+reference:file:/org/github/flytreeleft/nexus3-keycloak-plugin/0.4.0-SNAPSHOT/nexus3-keycloak-plugin-0.4.0-SNAPSHOT.jar = 200
+```
+
+Remove the `0.6.0-nexus3.69.0` line from `$install_dir/etc/karaf/startup.properties`
+(or rebuild the image `FROM sonatype/nexus3:3.69.0` without this plugin). Restart
+Nexus. Delete the new jar only after the previous login path is confirmed.
+
+### Upstream documentation
+
+The rest of this file is the upstream README. Its sample `keycloak.json` uses a
+placeholder secret and is not a Frontiers credential.
+
 This plugin adds a Keycloak realm to Sonatype Nexus OSS and enables you to
 authenticate with Keycloak Realm Users and authorize with Keycloak realm/client roles or groups.
 
-It works with Nexus 3.x and Keycloak 3.x ~ 14.x.
+Upstream claimed support for Nexus 3.x and Keycloak 3.x ~ 14.x. This fork is verified
+at compile time against Nexus 3.69.0-02 only. Keycloak client libraries stay at 9.0.2,
+which is what the installed 0.4.0-SNAPSHOT bundle embedded.
 
 ## Features
 
@@ -66,7 +196,7 @@ directly, just choose the latest version.
 #### 2. Copy all needed jars into nexus system folder
 
 ```
-PLUGIN_VERSION=0.6.0-SNAPSHOT
+PLUGIN_VERSION=0.6.0-nexus3.69.0
 jars="org/github/flytreeleft/nexus3-keycloak-plugin/$PLUGIN_VERSION/nexus3-keycloak-plugin-$PLUGIN_VERSION.jar"
 
 for jar in $(echo $jars | sed 's/ /\n/g'); do
@@ -232,9 +362,11 @@ Don't worry about it, you still login, just close the window.
 
 ## Docker
 
-You can execute command `bash docker/build.sh` to build your Nexus3 Docker image with this plugin.
-The image is based on https://github.com/sonatype/docker-nexus3 which is running Nexus v3.19.1-01.
-You can change the version of the base image or the version of this plugin in `docker/Dockerfile`.
+You can execute command `bash docker/build.sh` to build a local Nexus image with this plugin.
+It expects `target/nexus3-keycloak-plugin-0.6.0-nexus3.69.0.jar` from the build above and uses
+`FROM sonatype/nexus3:3.69.0`. It does not start the container. Do not use it against a live host.
+Put `keycloak.json` on a runtime mount, not in the image. `docker/run.sh` is the upstream
+local-run helper and is not part of the Frontiers install path.
 
 After the image has been built, you should [prepare](#5-create-keycloakjson) your `keycloak.json`
 and put it into the directory `docker/`, then execute command `bash docker/run.sh` to create and run a Nexus3 container.
