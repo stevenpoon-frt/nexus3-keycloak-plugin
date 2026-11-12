@@ -74,11 +74,34 @@ public class KeycloakUserManager extends AbstractReadOnlyUserManager {
 
     @Override
     public User getUser(String userId) throws UserNotFoundException {
+        return getUser(userId, null);
+    }
+
+    /**
+     * Nexus Repository 3.69 {@code DefaultSecuritySystem.findUser} always calls this
+     * overload. The single-argument {@link #getUser(String)} is no longer the call
+     * site, so a class compiled against Nexus 3.15 throws {@link AbstractMethodError}
+     * here after a successful login.
+     * <p>
+     * A null {@code roleIds} (the {@code currentUser} / UI state path) means the
+     * roles are not already known and are loaded from Keycloak. A non-null set is
+     * this user manager's own role ids and is applied without another Keycloak role
+     * lookup, matching Nexus {@code UserManagerImpl}.
+     */
+    @Override
+    public User getUser(String userId, Set<String> roleIds) throws UserNotFoundException {
         User foundUser = this.client.findUserByUserId(userId);
         if (foundUser == null) {
             throw new UserNotFoundException(userId);
         }
-        return completeUserRolesAndSource(foundUser);
+        if (roleIds == null) {
+            return completeUserRolesAndSource(foundUser);
+        }
+        foundUser.setSource(getSource());
+        foundUser.setRoles(roleIds.stream()
+                                  .map(roleId -> new RoleIdentifier(getSource(), roleId))
+                                  .collect(Collectors.toSet()));
+        return foundUser;
     }
 
     private User completeUserRolesAndSource(User user) {

@@ -57,7 +57,7 @@ public class KeycloakAuthenticatingRealmTest {
     @Test
     public void testDoGetAuthenticationInfoWithKeycloakOK() {
         UsernamePasswordToken token = new UsernamePasswordToken("u1", new char[] { 'p', '1' });
-        Mockito.when(this.mockedClient.authenticate(token)).thenReturn(true);
+        Mockito.when(this.mockedClient.authenticate((AuthenticationToken) token)).thenReturn(true);
         AuthenticationInfo info = this.r.doGetAuthenticationInfo(token);
         Assert.assertNotNull(info);
     }
